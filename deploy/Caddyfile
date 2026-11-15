@@ -1,0 +1,31 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$AUREX_DOMAIN} {
+	encode zstd gzip
+
+	# The API is served on the same origin, so browser sessions need no cross-site cookies.
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		Referrer-Policy same-origin
+	}
+
+	request_body {
+		max_size 10MB
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

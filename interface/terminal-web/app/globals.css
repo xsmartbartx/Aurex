@@ -1,0 +1,93 @@
+@import "tailwindcss";
+
+/* AUREX terminal theme. Dark only: a dense, low-glare surface for long sessions. */
+@theme inline {
+  --color-ink: #07090d;
+  --color-base: #0b0e14;
+  --color-panel: #10141c;
+  --color-raised: #161b26;
+  --color-hover: #1b2230;
+  --color-line: #1f2735;
+  --color-line-strong: #2c3648;
+  --color-fg: #dce2ec;
+  --color-dim: #9aa6b8;
+  --color-faint: #66728a;
+  --color-gold: #f0b44c;
+  --color-gold-dim: #a97b2a;
+  --color-up: #3fcf8e;
+  --color-down: #f26d78;
+  --color-info: #5fa8ff;
+  --color-warn: #f0b44c;
+  --color-demo: #b78cff;
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--color-base);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-gold) 35%, transparent);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line-strong) transparent;
+}
+
+:focus-visible {
+  outline: 1px solid var(--color-gold);
+  outline-offset: 1px;
+}
+
+input,
+select,
+textarea {
+  color-scheme: dark;
+}
+
+kbd {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  padding: 1px 5px;
+  border: 1px solid var(--color-line-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  color: var(--color-dim);
+  background: var(--color-raised);
+}
+
+@keyframes aurex-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.skeleton {
+  background: var(--color-raised);
+  border-radius: 4px;
+  animation: aurex-pulse 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+}
