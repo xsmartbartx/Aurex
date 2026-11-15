@@ -37,6 +37,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # the secret scan reads the commit range of the push or pull request
       - uses: astral-sh/setup-uv@v7
       - run: uv sync --frozen
       - run: uv run pip-audit --strict --progress-spinner off
