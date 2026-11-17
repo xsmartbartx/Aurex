@@ -167,6 +167,30 @@ def test_configured_admin_email_decides_platform_rights(make_account, monkeypatc
         assert session.get(User, stranger.user_id).is_platform_admin is True
 
 
+@pytest.mark.parametrize(
+    ("environment", "allow_signup", "admins", "email", "first_user", "expected"),
+    [
+        # Outside production the first account founds the deployment, even with sign-up closed.
+        ("development", False, [], "a@example.com", True, (True, True)),
+        ("development", False, [], "a@example.com", False, (False, False)),
+        ("development", True, [], "a@example.com", False, (True, False)),
+        # In production being first gives nothing: closed stays closed and nobody becomes administrator.
+        ("production", False, [], "a@example.com", True, (False, False)),
+        ("production", True, [], "a@example.com", True, (True, False)),
+        # A configured admin email may always sign up and administers; anyone else follows allow_signup.
+        ("production", False, ["Ops@Example.com"], "ops@example.com", True, (True, True)),
+        ("production", False, ["ops@example.com"], "a@example.com", True, (False, False)),
+        ("production", True, ["ops@example.com"], "a@example.com", True, (True, False)),
+    ],
+)
+def test_who_may_sign_up_and_who_administers(environment, allow_signup, admins, email, first_user, expected):
+    from core.config import Settings
+    from security.auth import sign_up_rights
+
+    settings = Settings(environment=environment, allow_signup=allow_signup, platform_admin_emails=admins)
+    assert sign_up_rights(settings, email, first_user=first_user) == expected
+
+
 def test_client_ip_header_is_used_only_when_configured(monkeypatch):
     from starlette.requests import Request
 

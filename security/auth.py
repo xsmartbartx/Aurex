@@ -11,7 +11,7 @@ from argon2.exceptions import Argon2Error, InvalidHashError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from core.config import get_settings
+from core.config import Settings, get_settings
 from core.errors import Conflict, EntitlementDenied, Forbidden, NotFound, Unauthenticated, ValidationFailure  # noqa: F401
 from core.types import Role, Scope, utcnow
 from modules.logging import record_audit
@@ -57,16 +57,28 @@ def _open_session(session: Session, user: User, tenant_id: UUID) -> str:
     return token
 
 
-def sign_up(session: Session, *, email: str, password: str, display_name: str, organization: str) -> str:
-    """Create a user and the tenant they own.
+def sign_up_rights(settings: Settings, email: str, *, first_user: bool) -> tuple[bool, bool]:
+    """Whether ``email`` may sign up now, and whether the account becomes a platform administrator.
 
-    Platform administrators are the configured admin emails; without that setting, the first account.
+    Configured admin emails may always sign up, even with sign-up closed, and are the administrators. Without that
+    setting the first account founds the deployment (allowed while sign-up is closed, and administrator), but never
+    in production: on a public site that would hand the platform to whoever signs up first.
     """
+    if settings.platform_admin_emails:
+        admin = settings.is_platform_admin_email(email)
+        return settings.allow_signup or admin, admin
+    founding = first_user and settings.environment != "production"
+    return settings.allow_signup or founding, founding
+
+
+def sign_up(session: Session, *, email: str, password: str, display_name: str, organization: str) -> str:
+    """Create a user and the tenant they own (see ``sign_up_rights`` for who may and who administers)."""
     settings = get_settings()
-    first_user = session.scalar(select(func.count()).select_from(User)) == 0
-    if not settings.allow_signup and not first_user:
-        raise Forbidden("Sign-up is disabled on this deployment")
     email = email.strip().lower()
+    first_user = session.scalar(select(func.count()).select_from(User)) == 0
+    allowed, admin = sign_up_rights(settings, email, first_user=first_user)
+    if not allowed:
+        raise Forbidden("Sign-up is disabled on this deployment")
     check_password_strength(password)
     if session.scalar(select(User.id).where(User.email == email)):
         raise Conflict("An account with this email already exists")
@@ -74,7 +86,7 @@ def sign_up(session: Session, *, email: str, password: str, display_name: str, o
         email=email,
         password_hash=_hasher.hash(password),
         display_name=display_name or email.split("@")[0],
-        is_platform_admin=(settings.is_platform_admin_email(email) if settings.platform_admin_emails else first_user),
+        is_platform_admin=admin,
     )
     tenant = Tenant(name=organization, slug=_slugify(organization, session), plan=settings.default_plan)
     session.add_all([user, tenant])

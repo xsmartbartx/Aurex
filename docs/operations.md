@@ -17,8 +17,8 @@
    `AUREX_DOMAIN`, `ACME_EMAIL`, `AUREX_SEC_USER_AGENT`, and optional AI, email and billing settings.
 2. `docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml --profile app up -d --build`
 3. Open `https://<domain>/signup` and create the account whose email is in `AUREX_PLATFORM_ADMIN_EMAILS`;
-   it becomes the platform administrator. (Without that setting the first account does, which is only
-   safe on a private network.)
+   it becomes the platform administrator and may sign up even while sign-up is closed. Production has no
+   other way to get an administrator; outside production, without that setting, the first account does.
 4. Set `AUREX_ALLOW_SIGNUP=false` if only invited users should get accounts.
 
 ## Behind an existing reverse proxy
@@ -56,14 +56,15 @@ aurex.example.com {
 	request_body {
 		max_size 10MB
 	}
-	handle /api/* {
-		reverse_proxy aurex-api-1:8000
-	}
-	handle {
-		reverse_proxy aurex-web-1:3000
-	}
+	@api path /api/*
+	reverse_proxy @api aurex-api-1:8000
+	reverse_proxy aurex-web-1:3000
 }
 ```
+
+Route with matchers on `reverse_proxy` as above rather than `handle` blocks: Caddy runs `handle` before
+`respond`, so access rules written with `respond` (an origin lock such as "403 unless the request comes
+from Cloudflare") would never apply.
 
 Set `AUREX_CLIENT_IP_HEADER` to the header your proxy or CDN uses for the visitor's address (for
 example `CF-Connecting-IP` behind Cloudflare) so sign-in limits apply per visitor, and only when the
