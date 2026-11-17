@@ -1,0 +1,28 @@
+# Overlay for a host where another reverse proxy already owns ports 80/443 (a shared edge proxy).
+# Nothing is published on the host; the edge proxy joins this project's network ("<project>_default")
+# and routes the public hostname: /api/* to <project>-api-1:8000, everything else to <project>-web-1:3000.
+#   docker compose -p aurex -f docker-compose.yml -f deploy/docker-compose.edge.yml --profile app up -d --build
+services:
+  db:
+    ports: !reset []
+    environment:
+      POSTGRES_PASSWORD: ${AUREX_DB_PASSWORD:?Set AUREX_DB_PASSWORD in .env}
+
+  migrate:
+    environment: &edge-env
+      AUREX_DATABASE_URL: postgresql+psycopg://${AUREX_DB_USER:-aurex}:${AUREX_DB_PASSWORD}@db:5432/${AUREX_DB_NAME:-aurex}
+      AUREX_ENVIRONMENT: production
+      AUREX_COOKIE_SECURE: "true"
+      AUREX_PUBLIC_URL: https://${AUREX_DOMAIN:?Set AUREX_DOMAIN in .env}
+      AUREX_SECRET_KEY: ${AUREX_SECRET_KEY:?Set AUREX_SECRET_KEY in .env}
+      AUREX_DEPLOYMENT_MODE: ${AUREX_DEPLOYMENT_MODE:-cloud}
+
+  api:
+    ports: !reset []
+    environment: *edge-env
+
+  worker:
+    environment: *edge-env
+
+  web:
+    ports: !reset []

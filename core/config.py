@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     session_ttl_hours: int = 24 * 14
     cookie_secure: bool = False
     allow_signup: bool = True
+    # Accounts with these emails administer the platform. When empty, the first account does (local use only:
+    # on a public site the first sign-up is a race). JSON list, e.g. ["ops@example.com"].
+    platform_admin_emails: list[str] = Field(default_factory=list)
+    # Header that carries the visitor's address when a trusted proxy sits in front, e.g. "CF-Connecting-IP"
+    # behind Cloudflare. Only set it when the origin accepts traffic from that proxy alone.
+    client_ip_header: str = ""
 
     # Limits
     rate_limit_per_minute: int = 240
@@ -79,6 +85,9 @@ class Settings(BaseSettings):
     def default_plan(self) -> str:
         """Self-hosted and local deployments are licensed as a whole; cloud tenants start on Community."""
         return "community" if self.deployment_mode == "cloud" else "enterprise"
+
+    def is_platform_admin_email(self, email: str) -> bool:
+        return email.strip().lower() in {e.strip().lower() for e in self.platform_admin_emails}
 
     def assert_safe(self) -> None:
         if self.environment == "production" and self.secret_key == DEV_SECRET:

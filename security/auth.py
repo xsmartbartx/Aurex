@@ -58,7 +58,10 @@ def _open_session(session: Session, user: User, tenant_id: UUID) -> str:
 
 
 def sign_up(session: Session, *, email: str, password: str, display_name: str, organization: str) -> str:
-    """Create a user and the tenant they own. The first user of a deployment administers the platform."""
+    """Create a user and the tenant they own.
+
+    Platform administrators are the configured admin emails; without that setting, the first account.
+    """
     settings = get_settings()
     first_user = session.scalar(select(func.count()).select_from(User)) == 0
     if not settings.allow_signup and not first_user:
@@ -71,7 +74,7 @@ def sign_up(session: Session, *, email: str, password: str, display_name: str, o
         email=email,
         password_hash=_hasher.hash(password),
         display_name=display_name or email.split("@")[0],
-        is_platform_admin=first_user,
+        is_platform_admin=(settings.is_platform_admin_email(email) if settings.platform_admin_emails else first_user),
     )
     tenant = Tenant(name=organization, slug=_slugify(organization, session), plan=settings.default_plan)
     session.add_all([user, tenant])
@@ -282,6 +285,7 @@ def accept_invite(session: Session, *, token: str, password: str, display_name: 
             email=invite.email,
             password_hash=_hasher.hash(password),
             display_name=display_name or invite.email.split("@")[0],
+            is_platform_admin=get_settings().is_platform_admin_email(invite.email),
         )
         session.add(user)
         session.flush()
