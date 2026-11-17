@@ -1,0 +1,79 @@
+# Local and self-hosted deployment. One artifact (the `aurex` image) runs as api, worker and migrate.
+# Production with TLS: docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d
+name: aurex
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${AUREX_DB_USER:-aurex}
+      POSTGRES_PASSWORD: ${AUREX_DB_PASSWORD:-aurex-dev-password}
+      POSTGRES_DB: ${AUREX_DB_NAME:-aurex}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${AUREX_DB_PORT:-54329}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    build: .
+    image: aurex:local
+    command: ["python", "-m", "pipelines.bootstrap"]
+    env_file: [{ path: .env, required: false }]
+    environment: &app-env
+      AUREX_DATABASE_URL: postgresql+psycopg://${AUREX_DB_USER:-aurex}:${AUREX_DB_PASSWORD:-aurex-dev-password}@db:5432/${AUREX_DB_NAME:-aurex}
+      AUREX_DEPLOYMENT_MODE: ${AUREX_DEPLOYMENT_MODE:-self_hosted}
+    depends_on:
+      db: { condition: service_healthy }
+    restart: "no"
+    profiles: [app]
+
+  api:
+    image: aurex:local
+    command: ["uvicorn", "interface.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
+    env_file: [{ path: .env, required: false }]
+    environment: *app-env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    ports:
+      - "127.0.0.1:${AUREX_API_PORT:-8000}:8000"
+    restart: unless-stopped
+    profiles: [app]
+
+  worker:
+    image: aurex:local
+    command: ["python", "-m", "pipelines.worker"]
+    env_file: [{ path: .env, required: false }]
+    environment: *app-env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    restart: unless-stopped
+    profiles: [app]
+
+  web:
+    build:
+      context: interface/terminal-web
+      args:
+        AUREX_API_INTERNAL_URL: http://api:8000
+    image: aurex-web:local
+    environment:
+      AUREX_API_INTERNAL_URL: http://api:8000
+    depends_on:
+      api: { condition: service_healthy }
+    ports:
+      - "127.0.0.1:${AUREX_WEB_PORT:-3000}:3000"
+    restart: unless-stopped
+    profiles: [app]
+
+volumes:
+  db-data:

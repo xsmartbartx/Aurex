@@ -1,0 +1,48 @@
+# Production overlay: TLS reverse proxy in front, nothing else published, secure cookies.
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml --profile app up -d --build
+services:
+  db:
+    ports: !reset []
+    environment:
+      POSTGRES_PASSWORD: ${AUREX_DB_PASSWORD:?Set AUREX_DB_PASSWORD in .env}
+
+  migrate:
+    environment: &prod-env
+      AUREX_DATABASE_URL: postgresql+psycopg://${AUREX_DB_USER:-aurex}:${AUREX_DB_PASSWORD}@db:5432/${AUREX_DB_NAME:-aurex}
+      AUREX_ENVIRONMENT: production
+      AUREX_COOKIE_SECURE: "true"
+      AUREX_PUBLIC_URL: https://${AUREX_DOMAIN:?Set AUREX_DOMAIN in .env}
+      AUREX_SECRET_KEY: ${AUREX_SECRET_KEY:?Set AUREX_SECRET_KEY in .env}
+
+  api:
+    ports: !reset []
+    environment: *prod-env
+
+  worker:
+    environment: *prod-env
+
+  web:
+    ports: !reset []
+
+  proxy:
+    image: caddy:2.10-alpine
+    profiles: [app]
+    depends_on:
+      api: { condition: service_healthy }
+      web: { condition: service_started }
+    environment:
+      AUREX_DOMAIN: ${AUREX_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:

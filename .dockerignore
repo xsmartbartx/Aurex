@@ -1,0 +1,16 @@
+.git
+.venv
+.claude
+**/__pycache__
+**/.pytest_cache
+.ruff_cache
+.import_linter_cache
+interface/terminal-web
+tests
+docs
+backups
+.env
+.env.*
+*.dump
+eval-report.json
+coverage.xml

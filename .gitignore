@@ -1,18 +1,39 @@
-# Build and Release Folders
-bin-debug/
-bin-release/
-[Oo]bj/
-[Bb]in/
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.import_linter_cache/
+.coverage
+coverage.xml
+eval-report.json
+htmlcov/
+dist/
+build/
+*.egg-info/
 
-# Other files and folders
-.settings/
+# Node
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
 
-# Executables
-*.swf
-*.air
-*.ipa
-*.apk
+# Environment and secrets
+.env
+.env.*
+!.env.example
 
-# Project files, i.e. `.project`, `.actionScriptProperties` and `.flexProperties`
-# should NOT be excluded as they contain compiler settings and other important
-# information for Eclipse / Flash Builder.
+# Local data
+backups/
+*.dump
+
+# OS and editors
+.DS_Store
+.idea/
+.vscode/
+
+# Local Claude Code settings (machine-specific paths)
+.claude/settings.local.json*
+**/.claude/launch.json

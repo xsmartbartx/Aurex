@@ -1,0 +1,141 @@
+"""Organization administration, invitations, audit trail, model policy, billing webhooks, platform admin."""
+
+import hashlib
+import hmac
+import json
+import time
+import uuid
+
+import pytest
+from fastapi.testclient import TestClient
+
+from core.config import get_settings
+from core.db import system_session
+from interface.api.main import app
+from security.models import Tenant
+from tests.conftest import HEADERS, PASSWORD
+
+
+def test_invitation_flow_roles_and_limits(make_account):
+    owner = make_account(plan="business")
+    response = owner.post("/org/invites", {"email": "new.analyst@example.com", "role": "analyst"})
+    assert response.status_code == 201
+    link = response.json()["link"]  # no SMTP in tests, so the administrator receives the link
+    assert response.json()["emailed"] is False and "/invite/" in link
+    token = link.rsplit("/", 1)[1]
+
+    guest = TestClient(app)
+    accepted = guest.post(
+        "/api/v1/auth/invites/accept", json={"token": token, "password": PASSWORD, "display_name": "New Analyst"}
+    )
+    assert accepted.status_code == 200
+    me = guest.get("/api/v1/auth/me").json()
+    assert me["tenant"]["id"] == str(owner.tenant_id) and me["role"] == "analyst"
+    assert guest.post("/api/v1/auth/invites/accept", json={"token": token, "password": PASSWORD}).status_code == 404
+
+    members = owner.get("/org/members").json()["items"]
+    analyst = next(m for m in members if m["email"] == "new.analyst@example.com")
+    # An analyst cannot administer the organization.
+    assert guest.post("/api/v1/org/invites", json={"email": "x@example.com"}, headers=HEADERS).status_code == 403
+    assert guest.get("/api/v1/org/audit").status_code == 403
+    assert owner.patch(f"/org/members/{analyst['user_id']}", {"role": "admin"}).status_code == 200
+    assert owner.delete(f"/org/members/{owner.user_id}").status_code == 409  # the last owner stays
+    assert owner.delete(f"/org/members/{analyst['user_id']}").status_code == 204
+    assert guest.get("/api/v1/auth/me").status_code == 401  # the removed member's session ends
+
+    pro = make_account(plan="pro")
+    assert pro.post("/org/invites", {"email": "a@example.com"}).status_code == 403  # plan without members
+
+
+def test_audit_trail_viewer(make_account):
+    owner = make_account(plan="business")
+    owner.post("/markets/watchlists", {"name": "Audited"})
+    items = owner.get("/org/audit", params={"action": "watchlist."}).json()["items"]
+    assert items and items[0]["action"].startswith("watchlist.") and items[0]["actor"] == owner.email
+    assert make_account(plan="pro").get("/org/audit").status_code == 403
+
+
+def test_model_policy_is_owner_controlled(make_account):
+    owner = make_account(plan="business")
+    assert owner.get("/org").json()["model_policy"]["external_models"] == "allow"
+    assert owner.patch("/org", {"external_models": "deny"}).status_code == 200
+    from security import auth
+
+    with system_session() as session:
+        assert auth.external_models_allowed(session, owner.tenant_id) is False
+
+
+def _signed(payload: dict, secret: str) -> tuple[bytes, str]:
+    body = json.dumps(payload).encode()
+    stamp = int(time.time())
+    signature = hmac.new(secret.encode(), f"{stamp}.".encode() + body, hashlib.sha256).hexdigest()
+    return body, f"t={stamp},v1={signature}"
+
+
+@pytest.fixture
+def billing(monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "stripe_secret_key", "sk_test_dummy")
+    monkeypatch.setattr(settings, "stripe_webhook_secret", "whsec_test_secret")
+    monkeypatch.setattr(settings, "stripe_prices", {"pro": "price_pro", "quant": "price_quant"})
+    return settings
+
+
+def test_subscription_webhooks_change_the_plan_once(make_account, billing):
+    account = make_account(plan="community")
+    with system_session() as session:
+        session.get(Tenant, account.tenant_id).stripe_customer_id = "cus_test_1"
+    client = TestClient(app)
+
+    def send(event):
+        body, signature = _signed(event, "whsec_test_secret")
+        return client.post("/api/v1/billing/webhook", content=body, headers={"stripe-signature": signature})
+
+    event = {
+        "id": f"evt_{uuid.uuid4().hex}",
+        "type": "customer.subscription.updated",
+        "created": int(time.time()),
+        "data": {
+            "object": {
+                "id": "sub_1",
+                "customer": "cus_test_1",
+                "status": "active",
+                "items": {"data": [{"price": {"id": "price_quant"}}]},
+            }
+        },
+    }
+    assert send(event).json()["status"] == "plan:quant"
+    assert account.get("/auth/me").json()["tenant"]["plan"] == "quant"
+    assert send(event).json()["status"] == "duplicate"
+    cancelled = {
+        **event,
+        "id": f"evt_{uuid.uuid4().hex}",
+        "type": "customer.subscription.deleted",
+        "data": {"object": {**event["data"]["object"], "status": "canceled"}},
+    }
+    assert send(cancelled).json()["status"] == "plan:community"
+
+    body, _ = _signed(event, "wrong_secret")
+    forged = client.post("/api/v1/billing/webhook", content=body, headers={"stripe-signature": "t=1,v1=00"})
+    assert forged.status_code == 422 and forged.json()["error"]["code"] == "invalid_signature"
+
+
+def test_plan_catalog_and_checkout_guards(make_account, billing):
+    plans = TestClient(app).get("/api/v1/billing/plans").json()
+    assert [p["code"] for p in plans["items"]] == ["community", "pro", "quant", "business", "enterprise"]
+    assert next(p for p in plans["items"] if p["code"] == "pro")["self_serve"] is True
+    member = make_account(plan="community")
+    assert member.post("/billing/checkout", {"plan": "enterprise"}).status_code == 422
+
+
+def test_platform_administration_is_restricted(make_account):
+    tenant = make_account(plan="pro")
+    assert tenant.get("/admin/tenants").status_code == 403
+    with system_session() as session:
+        from security.models import User
+
+        session.get(User, tenant.user_id).is_platform_admin = True
+    listing = tenant.get("/admin/tenants").json()["items"]
+    other = next(t for t in listing if t["id"] != str(tenant.tenant_id))
+    assert tenant.patch(f"/admin/tenants/{other['id']}", {"plan": "business"}).status_code == 200
+    assert tenant.patch(f"/admin/tenants/{tenant.tenant_id}", {"status": "suspended"}).status_code == 422

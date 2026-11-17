@@ -1,0 +1,128 @@
+# Stage order follows docs/ci-cd.md. Any failing stage stops the pipeline.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static:
+    name: Static analysis and architecture check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check core modules security interface/api pipelines tests
+      - run: uv run lint-imports
+      - uses: actions/setup-node@v5
+        with: { node-version: 22, cache: npm, cache-dependency-path: interface/terminal-web/package-lock.json }
+      - run: npm ci
+        working-directory: interface/terminal-web
+      - run: npm run lint && npm run typecheck
+        working-directory: interface/terminal-web
+
+  audit:
+    name: Dependency and license audit
+    needs: static
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # the secret scan reads the commit range of the push or pull request
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --frozen
+      - run: uv run pip-audit --strict --progress-spinner off
+      - uses: actions/setup-node@v5
+        with: { node-version: 22 }
+      - run: npm ci && npm audit --omit=dev --audit-level=high
+        working-directory: interface/terminal-web
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+
+  tests:
+    name: Validation, unit, integration, isolation and entitlement tests
+    needs: static
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env: { POSTGRES_USER: aurex, POSTGRES_PASSWORD: aurex-dev-password, POSTGRES_DB: aurex }
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U aurex" --health-interval 5s --health-retries 20
+    env:
+      AUREX_TEST_DATABASE_URL: postgresql+psycopg://aurex:aurex-dev-password@localhost:5432/aurex_test
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --frozen
+      - name: Python tests with coverage gate (80%)
+        run: uv run pytest -m "not eval" --cov --cov-report=xml --cov-fail-under=80
+      - name: Critical modules gate (90%)
+        run: >
+          uv run coverage report --fail-under=90
+          --include="core/*,modules/validation/*,security/auth.py,security/controls.py,modules/processing/*,modules/analysis/verify.py,modules/datalab/quality.py"
+      - uses: actions/setup-node@v5
+        with: { node-version: 22 }
+      - run: npm ci && npm test
+        working-directory: interface/terminal-web
+      - name: Operations scripts (Pester)
+        shell: pwsh
+        run: |
+          Install-Module Pester -Force -Scope CurrentUser -MinimumVersion 5.5
+          Invoke-Pester -Path tests/ops -CI
+
+  evaluation:
+    name: Pentest heuristics, injection corpus and AI evaluation
+    needs: tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env: { POSTGRES_USER: aurex, POSTGRES_PASSWORD: aurex-dev-password, POSTGRES_DB: aurex }
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U aurex" --health-interval 5s --health-retries 20
+    env:
+      AUREX_TEST_DATABASE_URL: postgresql+psycopg://aurex:aurex-dev-password@localhost:5432/aurex_test
+      AUREX_EVAL_REPORT: eval-report.json
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --frozen
+      - run: uv run pytest -m eval
+      - uses: actions/upload-artifact@v5
+        with: { name: eval-report, path: eval-report.json }
+
+  build:
+    name: Deterministic build and image storage
+    needs: [audit, evaluation]
+    runs-on: ubuntu-latest
+    permissions: { contents: read, packages: write }
+    steps:
+      - uses: actions/checkout@v5
+      - name: Image name (registries require lowercase)
+        run: echo "IMAGE=ghcr.io/$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: github.ref == 'refs/heads/main'
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: ${{ env.IMAGE }}/api:${{ github.sha }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: interface/terminal-web
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: ${{ env.IMAGE }}/web:${{ github.sha }}
