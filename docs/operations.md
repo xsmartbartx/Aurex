@@ -24,8 +24,31 @@
 ## Behind an existing reverse proxy
 
 On a host where another proxy already owns ports 80 and 443, use `deploy/docker-compose.edge.yml`
-instead of the production overlay. It publishes nothing; the edge proxy joins the `aurex_default`
-network and routes the hostname:
+instead of the production overlay. It publishes nothing, and it needs no secrets from you: on first
+start the `init-secrets` job generates the database password and `AUREX_SECRET_KEY` into the
+`app-secrets` volume, readable only by the database and the application, and never replaces them.
+Back that volume up together with the database. More secrets can be added to it as files named after
+the variable (`aurex_anthropic_api_key`, `aurex_stripe_secret_key`, ...) or set in `.env`.
+
+Site settings go in `.env` or in one more override file kept out of git, for example `compose.site.yml`:
+
+```yaml
+x-site: &site
+  AUREX_PUBLIC_URL: https://aurex.example.com
+  AUREX_PLATFORM_ADMIN_EMAILS: '["ops@example.com"]'
+  AUREX_CLIENT_IP_HEADER: CF-Connecting-IP
+  AUREX_SEC_USER_AGENT: Example Ltd ops@example.com
+services:
+  migrate: { environment: *site }
+  api: { environment: *site }
+  worker: { environment: *site }
+```
+
+```bash
+docker compose -p aurex -f docker-compose.yml -f deploy/docker-compose.edge.yml -f compose.site.yml --profile app up -d --build
+```
+
+The edge proxy joins the `aurex_default` network and routes the hostname:
 
 ```
 aurex.example.com {

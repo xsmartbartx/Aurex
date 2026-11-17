@@ -1,10 +1,17 @@
-"""Runtime configuration. Values come from the environment (prefix ``AUREX_``); secrets are never stored in code."""
+"""Runtime configuration. Values come from the environment (prefix ``AUREX_``); secrets are never stored in code.
 
+Secrets can also be files in ``AUREX_SECRETS_DIR`` named after the variable in lower case (``aurex_secret_key``,
+``aurex_database_password``, ``aurex_anthropic_api_key``, ...), such as a Docker volume or ``/run/secrets``.
+Environment variables take precedence over these files.
+"""
+
+import os
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
 
 DEV_SECRET = "dev-only-secret-change-me"  # noqa: S105 - placeholder, rejected outside local mode
 
@@ -21,6 +28,8 @@ class Settings(BaseSettings):
 
     # Storage
     database_url: str = "postgresql+psycopg://aurex:aurex-dev-password@localhost:54329/aurex"
+    # Replaces the password in database_url when set, so the URL itself can stay free of secrets.
+    database_password: str = ""
 
     # Sessions
     session_ttl_hours: int = 24 * 14
@@ -86,14 +95,25 @@ class Settings(BaseSettings):
         """Self-hosted and local deployments are licensed as a whole; cloud tenants start on Community."""
         return "community" if self.deployment_mode == "cloud" else "enterprise"
 
+    @model_validator(mode="after")
+    def _apply_database_password(self) -> "Settings":
+        if self.database_password:
+            url = make_url(self.database_url).set(password=self.database_password)
+            self.database_url = url.render_as_string(hide_password=False)
+        return self
+
     def is_platform_admin_email(self, email: str) -> bool:
         return email.strip().lower() in {e.strip().lower() for e in self.platform_admin_emails}
 
     def assert_safe(self) -> None:
-        if self.environment == "production" and self.secret_key == DEV_SECRET:
+        if self.environment != "production":
+            return
+        if self.secret_key == DEV_SECRET:
             raise RuntimeError("AUREX_SECRET_KEY must be set in production")
+        if not self.public_url.startswith("https://"):
+            raise RuntimeError("AUREX_PUBLIC_URL must be the site's https:// address in production")
 
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    return Settings(_secrets_dir=os.environ.get("AUREX_SECRETS_DIR") or None)

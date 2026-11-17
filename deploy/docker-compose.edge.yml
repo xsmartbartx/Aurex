@@ -1,28 +1,61 @@
 # Overlay for a host where another reverse proxy already owns ports 80/443 (a shared edge proxy).
 # Nothing is published on the host; the edge proxy joins this project's network ("<project>_default")
 # and routes the public hostname: /api/* to <project>-api-1:8000, everything else to <project>-web-1:3000.
-#   docker compose -p aurex -f docker-compose.yml -f deploy/docker-compose.edge.yml --profile app up -d --build
+#
+# Secrets: the database password and the session secret are generated on first start into the
+# "app-secrets" volume (pipelines/init_secrets.py) and never leave the host. Back that volume up with the
+# database. Further secrets (aurex_anthropic_api_key, aurex_stripe_secret_key, ...) can be added there as
+# files or set in .env.
+# Site settings (AUREX_PUBLIC_URL, AUREX_PLATFORM_ADMIN_EMAILS, AUREX_SEC_USER_AGENT, ...) come from .env or
+# from one more override file, e.g. compose.site.yml (kept out of git):
+#   docker compose -p aurex -f docker-compose.yml -f deploy/docker-compose.edge.yml -f compose.site.yml \
+#     --profile app up -d --build
+x-edge-env: &edge-env
+  AUREX_DATABASE_URL: postgresql+psycopg://${AUREX_DB_USER:-aurex}@db:5432/${AUREX_DB_NAME:-aurex}
+  AUREX_SECRETS_DIR: /run/aurex-secrets
+  AUREX_ENVIRONMENT: production
+  AUREX_COOKIE_SECURE: "true"
+  AUREX_DEPLOYMENT_MODE: ${AUREX_DEPLOYMENT_MODE:-cloud}
+
 services:
+  init-secrets:
+    image: aurex:local
+    pull_policy: never  # built by the migrate service
+    user: "0"
+    command: ["python", "-m", "pipelines.init_secrets", "/run/aurex-secrets"]
+    volumes:
+      - app-secrets:/run/aurex-secrets
+    restart: "no"
+
   db:
     ports: !reset []
-    environment:
-      POSTGRES_PASSWORD: ${AUREX_DB_PASSWORD:?Set AUREX_DB_PASSWORD in .env}
+    environment: !override
+      POSTGRES_USER: ${AUREX_DB_USER:-aurex}
+      POSTGRES_DB: ${AUREX_DB_NAME:-aurex}
+      POSTGRES_PASSWORD_FILE: /run/aurex-secrets/db_password
+    volumes:
+      - app-secrets:/run/aurex-secrets:ro
+    depends_on:
+      init-secrets: { condition: service_completed_successfully }
 
   migrate:
-    environment: &edge-env
-      AUREX_DATABASE_URL: postgresql+psycopg://${AUREX_DB_USER:-aurex}:${AUREX_DB_PASSWORD}@db:5432/${AUREX_DB_NAME:-aurex}
-      AUREX_ENVIRONMENT: production
-      AUREX_COOKIE_SECURE: "true"
-      AUREX_PUBLIC_URL: https://${AUREX_DOMAIN:?Set AUREX_DOMAIN in .env}
-      AUREX_SECRET_KEY: ${AUREX_SECRET_KEY:?Set AUREX_SECRET_KEY in .env}
-      AUREX_DEPLOYMENT_MODE: ${AUREX_DEPLOYMENT_MODE:-cloud}
+    environment: *edge-env
+    volumes:
+      - app-secrets:/run/aurex-secrets:ro
 
   api:
     ports: !reset []
     environment: *edge-env
+    volumes:
+      - app-secrets:/run/aurex-secrets:ro
 
   worker:
     environment: *edge-env
+    volumes:
+      - app-secrets:/run/aurex-secrets:ro
 
   web:
     ports: !reset []
+
+volumes:
+  app-secrets:

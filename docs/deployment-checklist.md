@@ -2,7 +2,9 @@
 
 ## Before the first production deployment
 
-- [ ] `.env` filled from `.env.example`; `AUREX_ENVIRONMENT=production`; strong `AUREX_SECRET_KEY` and database password.
+- [ ] `.env` filled from `.env.example`; `AUREX_ENVIRONMENT=production`; strong `AUREX_SECRET_KEY` and database password
+      (behind a shared proxy, `deploy/docker-compose.edge.yml` generates both; back up its `app-secrets` volume).
+- [ ] `AUREX_PUBLIC_URL` is the site's `https://` address (production refuses to start otherwise).
 - [ ] DNS for `AUREX_DOMAIN` points at the host; ports 80 and 443 open; nothing else published.
 - [ ] `AUREX_SEC_USER_AGENT` names the operator and a monitored contact address.
 - [ ] Decide the AI setup: model key and default tenant policy, or offline engine only.
