@@ -19,6 +19,12 @@ CLIENT_HEADER = "x-aurex-client"
 
 
 def client_ip(request: Request) -> str:
+    """The visitor's address: from the trusted proxy's header when one is configured, else the peer."""
+    header = get_settings().client_ip_header
+    if header:
+        value = request.headers.get(header, "").split(",")[0].strip()
+        if value:
+            return value[:64]
     return request.client.host if request.client else "unknown"
 
 

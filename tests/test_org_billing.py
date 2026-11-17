@@ -139,3 +139,40 @@ def test_platform_administration_is_restricted(make_account):
     other = next(t for t in listing if t["id"] != str(tenant.tenant_id))
     assert tenant.patch(f"/admin/tenants/{other['id']}", {"plan": "business"}).status_code == 200
     assert tenant.patch(f"/admin/tenants/{tenant.tenant_id}", {"status": "suspended"}).status_code == 422
+
+
+def test_configured_admin_email_decides_platform_rights(make_account, monkeypatch):
+    """With admin emails configured, being first gives no rights and the listed email always gets them."""
+    from fastapi.testclient import TestClient
+
+    from interface.api.main import app
+
+    monkeypatch.setattr(get_settings(), "platform_admin_emails", ["Chief.Admin@Example.com"])
+    stranger = make_account()
+    assert stranger.me["user"]["platform_admin"] is False
+    admin = TestClient(app)
+    response = admin.post(
+        "/api/v1/auth/signup",
+        json={"email": "chief.admin@example.com", "password": PASSWORD, "organization": f"Ops {uuid.uuid4().hex[:6]}"},
+    )
+    assert response.status_code == 201
+    assert admin.get("/api/v1/auth/me").json()["user"]["platform_admin"] is True
+
+    from pipelines.bootstrap import sync_platform_admins
+    from security.models import User
+
+    monkeypatch.setattr(get_settings(), "platform_admin_emails", [stranger.email])
+    with system_session() as session:
+        assert sync_platform_admins(session) == 1
+        assert session.get(User, stranger.user_id).is_platform_admin is True
+
+
+def test_client_ip_header_is_used_only_when_configured(monkeypatch):
+    from starlette.requests import Request
+
+    from interface.api.deps import client_ip
+
+    request = Request({"type": "http", "headers": [(b"cf-connecting-ip", b"203.0.113.9")], "client": ("10.0.0.1", 1)})
+    assert client_ip(request) == "10.0.0.1"
+    monkeypatch.setattr(get_settings(), "client_ip_header", "CF-Connecting-IP")
+    assert client_ip(request) == "203.0.113.9"
