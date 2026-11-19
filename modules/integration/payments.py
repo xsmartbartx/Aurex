@@ -9,6 +9,10 @@ from core.config import get_settings
 from core.errors import ProviderError, ValidationFailure
 from modules.logging import Severity, log
 
+# Marks the Stripe objects AUREX creates. One Stripe account can serve several products, and each
+# product's webhook receives every event, so AUREX acts only on checkouts that carry this mark.
+APP = "aurex"
+
 
 def _client() -> stripe.StripeClient:
     key = get_settings().stripe_secret_key
@@ -32,7 +36,9 @@ def _call(action: str, fn, params: dict[str, Any]) -> Any:
 def create_customer(*, name: str, email: str, tenant_id: str) -> str:
     client = _client()
     customer = _call(
-        "customer", client.v1.customers.create, {"name": name, "email": email, "metadata": {"tenant_id": tenant_id}}
+        "customer",
+        client.v1.customers.create,
+        {"name": name, "email": email, "metadata": {"app": APP, "tenant_id": tenant_id}},
     )
     return customer.id
 
@@ -53,18 +59,20 @@ def checkout_url(
             "cancel_url": cancel_url,
             "allow_promotion_codes": True,
             "billing_address_collection": "auto",
-            "metadata": {"tenant_id": tenant_id, "plan": plan},
-            "subscription_data": {"metadata": {"tenant_id": tenant_id, "plan": plan}},
+            "metadata": {"app": APP, "tenant_id": tenant_id, "plan": plan},
+            "subscription_data": {"metadata": {"app": APP, "tenant_id": tenant_id, "plan": plan}},
         },
     )
     return session.url
 
 
 def portal_url(*, customer_id: str, return_url: str) -> str:
+    """The Stripe customer portal. A configured portal keeps AUREX's own branding and plans on a shared account."""
     client = _client()
-    session = _call(
-        "portal", client.v1.billing_portal.sessions.create, {"customer": customer_id, "return_url": return_url}
-    )
+    params: dict[str, Any] = {"customer": customer_id, "return_url": return_url}
+    if configuration := get_settings().stripe_portal_configuration:
+        params["configuration"] = configuration
+    session = _call("portal", client.v1.billing_portal.sessions.create, params)
     return session.url
 
 

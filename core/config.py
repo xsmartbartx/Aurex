@@ -84,6 +84,9 @@ class Settings(BaseSettings):
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
     stripe_prices: dict[str, str] = Field(default_factory=dict)  # plan -> Stripe price id
+    # Customer portal configuration (bpc_...). Set it when the Stripe account serves other products too;
+    # otherwise the account's default portal, with its branding and plans, is used.
+    stripe_portal_configuration: str = ""
     plan_price_labels: dict[str, str] = Field(default_factory=dict)  # plan -> display label
 
     @property

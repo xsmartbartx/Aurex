@@ -101,3 +101,9 @@ Create products and recurring prices in Stripe, set `AUREX_STRIPE_PRICES` (for e
 webhook endpoint `https://<domain>/api/v1/billing/webhook` for `checkout.session.completed` and
 `customer.subscription.*` events. Put its signing secret in `AUREX_STRIPE_WEBHOOK_SECRET`. Enable the
 customer portal in Stripe so owners can change plans and download invoices.
+
+On a Stripe account shared with other products, every product's webhook receives every event. AUREX
+marks its customers, checkouts and subscriptions with the metadata `app: aurex`, acts only on checkouts
+that carry it, and ignores subscriptions of customers it does not know. Create a portal configuration for
+AUREX (its own headline, legal links, return URL and the AUREX prices customers may switch between) and
+set its id in `AUREX_STRIPE_PORTAL_CONFIGURATION`; otherwise the account's default portal is shown.
