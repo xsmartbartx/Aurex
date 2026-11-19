@@ -35,7 +35,9 @@ def catalog() -> list[dict[str, Any]]:
                 "price_label": settings.plan_price_labels.get(
                     plan.code, "Free" if plan.code == "community" else "Contact us" if plan.code == "enterprise" else ""
                 ),
-                "self_serve": plan.code in SELF_SERVE and plan.code in settings.stripe_prices,
+                "self_serve": settings.billing_enabled
+                and plan.code in SELF_SERVE
+                and plan.code in settings.stripe_prices,
             }
         )
     return out

@@ -202,6 +202,10 @@ def test_plan_catalog_and_checkout_guards(make_account, billing):
     plans = TestClient(app).get("/api/v1/billing/plans").json()
     assert [p["code"] for p in plans["items"]] == ["community", "pro", "quant", "business", "enterprise"]
     assert next(p for p in plans["items"] if p["code"] == "pro")["self_serve"] is True
+    # A price id alone does not make a plan buyable: without a Stripe key the checkout would fail.
+    billing.stripe_secret_key = ""
+    plans = TestClient(app).get("/api/v1/billing/plans").json()
+    assert not any(p["self_serve"] for p in plans["items"]) and plans["billing_enabled"] is False
     member = make_account(plan="community")
     assert member.post("/billing/checkout", {"plan": "enterprise"}).status_code == 422
 
