@@ -78,6 +78,9 @@ def billing(monkeypatch):
     monkeypatch.setattr(settings, "stripe_secret_key", "sk_test_dummy")
     monkeypatch.setattr(settings, "stripe_webhook_secret", "whsec_test_secret")
     monkeypatch.setattr(settings, "stripe_prices", {"pro": "price_pro", "quant": "price_quant"})
+    # Start from the defaults whatever the local .env sets, so "not configured" assertions hold everywhere.
+    monkeypatch.setattr(settings, "stripe_portal_configuration", "")
+    monkeypatch.setattr(settings, "stripe_automatic_tax", False)
     return settings
 
 
