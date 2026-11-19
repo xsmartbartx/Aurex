@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     # Customer portal configuration (bpc_...). Set it when the Stripe account serves other products too;
     # otherwise the account's default portal, with its branding and plans, is used.
     stripe_portal_configuration: str = ""
+    # Stripe Tax: calculate tax in Checkout from the customer's address and collect business tax ids. Turn it on
+    # only once Stripe Tax is active on the account (head office and registrations); Stripe refuses it before.
+    stripe_automatic_tax: bool = False
     plan_price_labels: dict[str, str] = Field(default_factory=dict)  # plan -> display label
 
     @property

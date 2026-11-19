@@ -47,22 +47,28 @@ def checkout_url(
     *, customer_id: str, price_id: str, tenant_id: str, plan: str, success_url: str, cancel_url: str
 ) -> str:
     client = _client()
-    session = _call(
-        "checkout",
-        client.v1.checkout.sessions.create,
-        {
-            "mode": "subscription",
-            "customer": customer_id,
-            "client_reference_id": tenant_id,
-            "line_items": [{"price": price_id, "quantity": 1}],
-            "success_url": success_url,
-            "cancel_url": cancel_url,
-            "allow_promotion_codes": True,
-            "billing_address_collection": "auto",
-            "metadata": {"app": APP, "tenant_id": tenant_id, "plan": plan},
-            "subscription_data": {"metadata": {"app": APP, "tenant_id": tenant_id, "plan": plan}},
-        },
-    )
+    params: dict[str, Any] = {
+        "mode": "subscription",
+        "customer": customer_id,
+        "client_reference_id": tenant_id,
+        "line_items": [{"price": price_id, "quantity": 1}],
+        "success_url": success_url,
+        "cancel_url": cancel_url,
+        "allow_promotion_codes": True,
+        "billing_address_collection": "auto",
+        "metadata": {"app": APP, "tenant_id": tenant_id, "plan": plan},
+        "subscription_data": {"metadata": {"app": APP, "tenant_id": tenant_id, "plan": plan}},
+    }
+    if get_settings().stripe_automatic_tax:
+        # Tax follows the buyer's location, so Checkout asks for the billing address, saves it (and a business
+        # tax id, which can make a cross-border sale reverse charge) on the customer, and calculates the tax.
+        params |= {
+            "automatic_tax": {"enabled": True},
+            "billing_address_collection": "required",
+            "customer_update": {"address": "auto", "name": "auto"},
+            "tax_id_collection": {"enabled": True},
+        }
+    session = _call("checkout", client.v1.checkout.sessions.create, params)
     return session.url
 
 

@@ -181,6 +181,15 @@ def test_stripe_requests_carry_the_aurex_mark_and_portal_configuration(monkeypat
     )
     assert calls["customer"]["metadata"]["app"] == "aurex"
     assert calls["checkout"]["metadata"]["app"] == calls["checkout"]["subscription_data"]["metadata"]["app"] == "aurex"
+    assert "automatic_tax" not in calls["checkout"]  # off until Stripe Tax is active on the account
+
+    monkeypatch.setattr(billing, "stripe_automatic_tax", True)
+    payments.checkout_url(
+        customer_id="cus_1", price_id="price_pro", tenant_id="t1", plan="pro", success_url="s", cancel_url="c"
+    )
+    taxed = calls["checkout"]
+    assert taxed["automatic_tax"] == {"enabled": True} and taxed["tax_id_collection"] == {"enabled": True}
+    assert taxed["billing_address_collection"] == "required" and taxed["customer_update"]["address"] == "auto"
 
     payments.portal_url(customer_id="cus_1", return_url="r")
     assert "configuration" not in calls["portal"]  # the account default, when none is configured
