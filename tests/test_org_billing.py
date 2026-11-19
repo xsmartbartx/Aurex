@@ -120,6 +120,84 @@ def test_subscription_webhooks_change_the_plan_once(make_account, billing):
     assert forged.status_code == 422 and forged.json()["error"]["code"] == "invalid_signature"
 
 
+def test_checkouts_of_other_products_on_a_shared_stripe_account_are_ignored(make_account, billing):
+    account = make_account(plan="community")
+    client = TestClient(app)
+
+    def checkout_completed(metadata, reference):
+        event = {
+            "id": f"evt_{uuid.uuid4().hex}",
+            "type": "checkout.session.completed",
+            "created": int(time.time()),
+            "data": {
+                "object": {
+                    "client_reference_id": reference,
+                    "customer": "cus_shared_1",
+                    "subscription": "sub_shared_1",
+                    "metadata": metadata,
+                }
+            },
+        }
+        body, signature = _signed(event, "whsec_test_secret")
+        return client.post("/api/v1/billing/webhook", content=body, headers={"stripe-signature": signature})
+
+    # Another product's checkout: no AUREX mark and a reference that is not one of AUREX's organizations.
+    foreign = checkout_completed({"plan": "team"}, "org_2xYz")
+    assert foreign.status_code == 200 and foreign.json()["status"] == "ignored"
+    assert checkout_completed({"app": "aurex"}, "not-a-uuid").json()["status"] == "unknown_tenant"
+
+    assert checkout_completed({"app": "aurex", "plan": "pro"}, str(account.tenant_id)).json()["status"] == "linked"
+    with system_session() as session:
+        tenant = session.get(Tenant, account.tenant_id)
+        assert (tenant.stripe_customer_id, tenant.stripe_subscription_id) == ("cus_shared_1", "sub_shared_1")
+
+
+def test_stripe_requests_carry_the_aurex_mark_and_portal_configuration(monkeypatch, billing):
+    from types import SimpleNamespace
+
+    from modules.integration import payments
+
+    calls = {}
+
+    def recorder(name, result):
+        def create(params):
+            calls[name] = params
+            return result
+
+        return SimpleNamespace(create=create)
+
+    fake = SimpleNamespace(
+        v1=SimpleNamespace(
+            customers=recorder("customer", SimpleNamespace(id="cus_1")),
+            checkout=SimpleNamespace(sessions=recorder("checkout", SimpleNamespace(url="https://checkout.example"))),
+            billing_portal=SimpleNamespace(sessions=recorder("portal", SimpleNamespace(url="https://portal.example"))),
+        )
+    )
+    monkeypatch.setattr(payments, "_client", lambda: fake)
+
+    payments.create_customer(name="Org", email="o@example.com", tenant_id="t1")
+    payments.checkout_url(
+        customer_id="cus_1", price_id="price_pro", tenant_id="t1", plan="pro", success_url="s", cancel_url="c"
+    )
+    assert calls["customer"]["metadata"]["app"] == "aurex"
+    assert calls["checkout"]["metadata"]["app"] == calls["checkout"]["subscription_data"]["metadata"]["app"] == "aurex"
+    assert "automatic_tax" not in calls["checkout"]  # off until Stripe Tax is active on the account
+
+    monkeypatch.setattr(billing, "stripe_automatic_tax", True)
+    payments.checkout_url(
+        customer_id="cus_1", price_id="price_pro", tenant_id="t1", plan="pro", success_url="s", cancel_url="c"
+    )
+    taxed = calls["checkout"]
+    assert taxed["automatic_tax"] == {"enabled": True} and taxed["tax_id_collection"] == {"enabled": True}
+    assert taxed["billing_address_collection"] == "required" and taxed["customer_update"]["address"] == "auto"
+
+    payments.portal_url(customer_id="cus_1", return_url="r")
+    assert "configuration" not in calls["portal"]  # the account default, when none is configured
+    monkeypatch.setattr(billing, "stripe_portal_configuration", "bpc_aurex")
+    payments.portal_url(customer_id="cus_1", return_url="r")
+    assert calls["portal"]["configuration"] == "bpc_aurex"
+
+
 def test_plan_catalog_and_checkout_guards(make_account, billing):
     plans = TestClient(app).get("/api/v1/billing/plans").json()
     assert [p["code"] for p in plans["items"]] == ["community", "pro", "quant", "business", "enterprise"]

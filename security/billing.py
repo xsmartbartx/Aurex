@@ -116,7 +116,12 @@ def handle_event(session: Session, event: dict[str, Any]) -> str:
     )
     obj = (event.get("data") or {}).get("object") or {}
     if kind == "checkout.session.completed":
-        tenant = session.get(Tenant, UUID(str(obj.get("client_reference_id"))))
+        if (obj.get("metadata") or {}).get("app") != payments.APP:
+            return "ignored"  # another product's checkout on a shared Stripe account
+        try:
+            tenant = session.get(Tenant, UUID(str(obj.get("client_reference_id"))))
+        except ValueError:
+            tenant = None
         if tenant is None:
             return "unknown_tenant"
         tenant.stripe_customer_id = obj.get("customer") or tenant.stripe_customer_id
