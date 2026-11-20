@@ -20,7 +20,10 @@
    it becomes the platform administrator and may sign up even while sign-up is closed. Production has no
    other way to get an administrator; outside production, without that setting, the first account does.
    The setting is the complete list: each start (the `migrate` job) gives listed accounts platform rights
-   and removes them from every other account, so removing an email from the list revokes its rights.
+   and removes them from every other account, so removing an email from the list revokes its rights. This
+   holds only while at least one email stays listed: an empty list changes nothing, and existing
+   administrators keep their rights. To hand the platform to someone else, list their email instead of
+   emptying the setting.
 4. Set `AUREX_ALLOW_SIGNUP=false` if only invited users should get accounts.
 
 ## Behind an existing reverse proxy
