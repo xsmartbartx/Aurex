@@ -8,6 +8,7 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from core.config import get_settings
 from core.db import system_session
@@ -243,9 +244,20 @@ def test_configured_admin_email_decides_platform_rights(make_account, monkeypatc
     from pipelines.bootstrap import sync_platform_admins
     from security.models import User
 
+    # The configured list is the complete list: the listed account gains the rights, every other one loses them.
     monkeypatch.setattr(get_settings(), "platform_admin_emails", [stranger.email])
     with system_session() as session:
-        assert sync_platform_admins(session) == 1
+        changed = sync_platform_admins(session)
+        assert changed["promoted"] == 1 and changed["demoted"] >= 1
+        assert session.get(User, stranger.user_id).is_platform_admin is True
+        admins = session.scalars(select(User.email).where(User.is_platform_admin.is_(True))).all()
+        assert admins == [stranger.email]
+    assert admin.get("/api/v1/auth/me").json()["user"]["platform_admin"] is False
+
+    # Without a list nothing changes, so a local deployment keeps its first-account administrator.
+    monkeypatch.setattr(get_settings(), "platform_admin_emails", [])
+    with system_session() as session:
+        assert sync_platform_admins(session) == {"promoted": 0, "demoted": 0}
         assert session.get(User, stranger.user_id).is_platform_admin is True
 
 
