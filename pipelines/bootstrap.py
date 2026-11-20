@@ -30,18 +30,32 @@ def bootstrap() -> None:
     with system_session() as session:
         catalog.seed(session)
         graph_seed.seed(session)
-        promoted = sync_platform_admins(session)
-    log("pipeline", "bootstrap.completed", platform_admins_promoted=promoted)
+        admins = sync_platform_admins(session)
+    log(
+        "pipeline",
+        "bootstrap.completed",
+        platform_admins_promoted=admins["promoted"],
+        platform_admins_demoted=admins["demoted"],
+    )
 
 
-def sync_platform_admins(session) -> int:
-    """Give existing accounts with a configured admin email platform rights. Never removes them."""
+def sync_platform_admins(session) -> dict[str, int]:
+    """Make the configured admin emails the complete list of platform administrators.
+
+    Accounts with a listed email get platform rights and every other account loses them, so the list decides who
+    administers the deployment. With no list configured nothing changes: a local deployment keeps the administrator
+    its first account became.
+    """
     emails = [e.strip().lower() for e in get_settings().platform_admin_emails if e.strip()]
     if not emails:
-        return 0
-    return session.execute(
+        return {"promoted": 0, "demoted": 0}
+    promoted = session.execute(
         update(User).where(User.email.in_(emails), User.is_platform_admin.is_(False)).values(is_platform_admin=True)
     ).rowcount
+    demoted = session.execute(
+        update(User).where(User.email.not_in(emails), User.is_platform_admin.is_(True)).values(is_platform_admin=False)
+    ).rowcount
+    return {"promoted": promoted, "demoted": demoted}
 
 
 if __name__ == "__main__":

@@ -19,6 +19,8 @@
 3. Open `https://<domain>/signup` and create the account whose email is in `AUREX_PLATFORM_ADMIN_EMAILS`;
    it becomes the platform administrator and may sign up even while sign-up is closed. Production has no
    other way to get an administrator; outside production, without that setting, the first account does.
+   The setting is the complete list: each start (the `migrate` job) gives listed accounts platform rights
+   and removes them from every other account, so removing an email from the list revokes its rights.
 4. Set `AUREX_ALLOW_SIGNUP=false` if only invited users should get accounts.
 
 ## Behind an existing reverse proxy
