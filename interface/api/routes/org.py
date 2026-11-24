@@ -12,14 +12,14 @@ from core import entitlements as ent
 from core.config import get_settings
 from core.db import system_session
 from core.types import Role
-from interface.api.deps import DbDep, ScopeDep
+from interface.api.deps import DbDep, ScopeDep, attachment
 from modules.datalab.models import Dataset, DatasetUsage
 from modules.integration import mail
 from modules.logging import record_audit
 from modules.logging.audit import AuditEvent
 from modules.validation import Strict, clean_text
-from security import auth
-from security.controls import usage_today
+from security import auth, privacy
+from security.controls import rate_limiter, usage_today
 from security.models import Invite, Membership, Tenant, User
 
 router = APIRouter(prefix="/org", tags=["organization"])
@@ -151,6 +151,16 @@ def change_role(user_id: UUID, body: RoleIn, scope: ScopeDep) -> dict:
 def remove(user_id: UUID, scope: ScopeDep) -> None:
     with system_session() as session:
         auth.remove_member(session, scope, user_id)
+
+
+@router.get("/export")
+def export_organization(scope: ScopeDep):
+    """Download every row the organization owns (owners only)."""
+    rate_limiter.check(f"org-export:{scope.tenant_id}", 5, 3600)
+    with system_session() as session:
+        data = privacy.export_organization(session, scope)
+        record_audit(session, action="org.data_exported", tenant_id=scope.tenant_id, actor_id=scope.user_id)
+    return attachment(data, f"aurex-organization-{data['exported_at'][:10]}.json")
 
 
 @router.get("/audit")

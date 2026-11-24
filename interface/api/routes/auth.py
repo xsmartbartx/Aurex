@@ -3,17 +3,18 @@
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Request, Response
+from fastapi.responses import JSONResponse
 from pydantic import EmailStr, Field
 from sqlalchemy import select
 
 from core.config import get_settings
 from core.db import system_session
 from core.errors import Unauthenticated
-from interface.api.deps import AdminDep, DbDep, ScopeDep, client_ip
+from interface.api.deps import AdminDep, DbDep, ScopeDep, attachment, client_ip
 from modules.integration import mail
 from modules.logging import record_audit
 from modules.validation import Strict
-from security import auth
+from security import auth, privacy
 from security.controls import rate_limiter, usage_today
 from security.models import ApiKey, Membership, Tenant, User
 from security.plans import get_plan
@@ -55,6 +56,10 @@ class PasswordResetIn(Strict):
 
 class ResetIssue(Strict):
     email: EmailStr
+
+
+class AccountDelete(Strict):
+    password: str = Field(min_length=1, max_length=200)
 
 
 class KeyCreate(Strict):
@@ -176,6 +181,25 @@ def accept_invite(body: InviteAccept, request: Request, response: Response) -> d
         token = auth.accept_invite(session, token=body.token, password=body.password, display_name=body.display_name)
     _set_cookie(response, token)
     return {"status": "ok"}
+
+
+@router.get("/me/export")
+def export_my_data(scope: ScopeDep, request: Request) -> JSONResponse:
+    rate_limiter.check(f"export:{scope.user_id}", 10, 3600)
+    with system_session() as session:
+        data = privacy.export_personal(session, scope)
+        record_audit(session, action="auth.data_exported", tenant_id=scope.tenant_id, actor_id=scope.user_id)
+    return attachment(data, f"aurex-my-data-{data['exported_at'][:10]}.json")
+
+
+@router.post("/me/delete")
+def delete_my_account(body: AccountDelete, scope: ScopeDep, request: Request, response: Response) -> dict:
+    """Delete the signed-in account now, with organizations it owns alone. Needs the password."""
+    rate_limiter.check(f"delete:{client_ip(request)}", 5, 3600)
+    with system_session() as session:
+        closed = privacy.delete_account(session, scope, password=body.password)
+    response.delete_cookie(auth.SESSION_COOKIE, path="/")
+    return {"status": "deleted", "organizations_closed": closed}
 
 
 @router.get("/me")

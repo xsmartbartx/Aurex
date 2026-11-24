@@ -1,10 +1,10 @@
 "use client";
 
-import { Check, Copy, KeyRound, Trash2 } from "lucide-react";
+import { Check, Copy, Download, KeyRound, Trash2 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState, type FormEvent } from "react";
 import { Badge, Button, cx, Empty, ErrorNote, Field, Input, Locked, Panel, Skeleton, Tabs } from "@/components/ui";
-import { api, describeError } from "@/lib/api";
+import { API, api, describeError } from "@/lib/api";
 import { fmtAge, fmtDate, fmtDateTime } from "@/lib/format";
 import { useApi } from "@/lib/hooks";
 import { useSession } from "@/lib/session";
@@ -67,6 +67,54 @@ function Profile() {
             </button>
           ))}
         </div>
+      )}
+      <YourData />
+    </div>
+  );
+}
+
+function YourData() {
+  const { me } = useSession();
+  const router = useRouter();
+  const { run, note } = useAction();
+  const [confirming, setConfirming] = useState(false);
+  const link = "inline-flex h-8 items-center gap-1.5 rounded border border-line-strong px-3 text-[12.5px] hover:bg-raised";
+  return (
+    <div className="space-y-3 border-t border-line pt-4">
+      <h2 className="text-[13px] font-semibold">Your data</h2>
+      <p className="text-[12px] text-dim">
+        Download a copy of what AUREX stores about you, or delete your account. See the{" "}
+        <a href="/legal/privacy" className="underline">privacy notice</a>.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <a href={`${API}/auth/me/export`} download className={link}><Download size={12} /> My data</a>
+        {me.role === "owner" && (
+          <a href={`${API}/org/export`} download className={link}><Download size={12} /> {me.tenant.name} data</a>
+        )}
+      </div>
+      {!confirming ? (
+        <Button variant="danger" onClick={() => setConfirming(true)}>Delete my account…</Button>
+      ) : (
+        <form className="space-y-3 rounded border border-down/40 bg-down/5 p-3" onSubmit={async (event: FormEvent<HTMLFormElement>) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          if (await run(() => api.post("/auth/me/delete", { password: String(form.get("password")) }))) {
+            router.replace("/");
+          }
+        }}>
+          <p className="text-[12px] leading-relaxed text-fg">
+            Your account is deleted now and cannot be restored. Organizations where you are the only member are
+            closed with all their data: watchlists, portfolios, research, imports and API keys. In organizations with
+            other members you just leave. Download your data first if you want a copy. Security records and invoices
+            are kept as the law requires.
+          </p>
+          <Field label="Your password"><Input name="password" type="password" required autoComplete="current-password" /></Field>
+          {note}
+          <div className="flex gap-2">
+            <Button type="submit" variant="danger">Delete my account</Button>
+            <Button type="button" variant="ghost" onClick={() => setConfirming(false)}>Cancel</Button>
+          </div>
+        </form>
       )}
     </div>
   );

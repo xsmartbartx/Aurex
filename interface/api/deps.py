@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from typing import Annotated
 
 from fastapi import Depends, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from core.config import get_settings
@@ -61,3 +62,11 @@ def platform_admin(scope: Annotated[Scope, Depends(get_scope)]) -> Scope:
 ScopeDep = Annotated[Scope, Depends(get_scope)]
 DbDep = Annotated[Session, Depends(get_db)]
 AdminDep = Annotated[Scope, Depends(platform_admin)]
+
+
+def attachment(data: dict, filename: str) -> JSONResponse:
+    """A JSON download. Never cached: it holds personal data."""
+    return JSONResponse(
+        data,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"},
+    )
