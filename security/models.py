@@ -88,6 +88,23 @@ class UsageCounter(TenantMixin, Base):
     count: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class PasswordReset(IdMixin, CreatedMixin, Base):
+    """A single-use, time-limited link to set a new password. Only a hash of the link's token is stored.
+
+    Not tenant data: accounts span organizations, so the table has no tenant and the application role cannot read
+    it at all (row-level security without a policy); only the system session issues and redeems links.
+    """
+
+    __tablename__ = "password_resets"
+
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    # The platform administrator who issued the link; empty when the account holder asked for it.
+    requested_by: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class BillingEvent(Base):
     """Processed payment-provider events, kept so a webhook delivered twice is applied once."""
 

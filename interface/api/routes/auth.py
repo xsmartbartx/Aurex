@@ -2,14 +2,15 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Request, Response
 from pydantic import EmailStr, Field
 from sqlalchemy import select
 
 from core.config import get_settings
 from core.db import system_session
 from core.errors import Unauthenticated
-from interface.api.deps import DbDep, ScopeDep, client_ip
+from interface.api.deps import AdminDep, DbDep, ScopeDep, client_ip
+from modules.integration import mail
 from modules.logging import record_audit
 from modules.validation import Strict
 from security import auth
@@ -41,6 +42,19 @@ class InviteAccept(Strict):
     token: str = Field(min_length=20, max_length=100)
     password: str = Field(min_length=1, max_length=200)
     display_name: str = Field(default="", max_length=120)
+
+
+class PasswordForgot(Strict):
+    email: EmailStr
+
+
+class PasswordResetIn(Strict):
+    token: str = Field(min_length=20, max_length=100)
+    password: str = Field(min_length=10, max_length=200)
+
+
+class ResetIssue(Strict):
+    email: EmailStr
 
 
 class KeyCreate(Strict):
@@ -102,6 +116,57 @@ def sign_out(request: Request, response: Response) -> dict:
             auth.sign_out(session, token)
     response.delete_cookie(auth.SESSION_COOKIE, path="/")
     return {"status": "ok"}
+
+
+def _reset_link(token: str) -> str:
+    return f"{get_settings().public_url}/reset-password/{token}"
+
+
+def _send_reset_email(to: str, link: str) -> bool:
+    return mail.send(
+        to=to,
+        subject="Reset your AUREX password",
+        body="Someone asked to reset the password of your AUREX account.\n\n"
+        f"Set a new password within the hour: {link}\n\n"
+        "The link works once. If you did not ask for it, ignore this message: your password stays as it is.\n",
+    )
+
+
+@router.post("/password/forgot", status_code=202)
+def forgot_password(body: PasswordForgot, request: Request, background: BackgroundTasks) -> dict:
+    """Email a reset link. The answer is the same whether or not an account uses the address."""
+    rate_limiter.check(f"reset:{client_ip(request)}", 10, 900)
+    rate_limiter.check(f"reset:{body.email.lower()}", 3, 900)
+    email_enabled = mail.configured()
+    if email_enabled:
+        with system_session() as session:
+            issued = auth.request_password_reset(session, email=body.email)
+        if issued:
+            user, token = issued
+            # Sent after the response, so the reply takes as long whether or not the account exists.
+            background.add_task(_send_reset_email, user.email, _reset_link(token))
+    # Without email the deployment administrator issues reset links (POST /auth/admin/password-reset).
+    return {"status": "accepted", "email_enabled": email_enabled}
+
+
+@router.post("/password/reset")
+def reset_password(body: PasswordResetIn, request: Request) -> dict:
+    rate_limiter.check(f"reset-use:{client_ip(request)}", 20, 900)
+    with system_session() as session:
+        auth.reset_password(session, token=body.token, password=body.password)
+    return {"status": "password_reset"}
+
+
+@router.post("/admin/password-reset", status_code=201)
+def issue_password_reset(body: ResetIssue, scope: AdminDep) -> dict:
+    """The deployment administrator issues a reset link for an account."""
+    with system_session() as session:
+        user, token, expires_at = auth.issue_password_reset(session, scope, email=body.email)
+        email = user.email
+    link = _reset_link(token)
+    sent = _send_reset_email(email, link)
+    # The link is a credential; it is shown to the administrator only when it could not be emailed.
+    return {"emailed": sent, "link": None if sent else link, "expires_at": expires_at}
 
 
 @router.post("/invites/accept")
