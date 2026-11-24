@@ -127,3 +127,19 @@ To collect sales tax or VAT with Stripe Tax, first complete its settings in the 
 office address and a registration for every place you are registered), give the AUREX products a tax
 code and the prices a tax behavior, then set `AUREX_STRIPE_AUTOMATIC_TAX=true`. Checkout then requires a
 billing address, saves it on the customer, accepts business tax ids and adds the tax.
+
+## Data export and account deletion
+
+Settings → Profile → Your data lets anyone download what AUREX stores about them
+(`GET /api/v1/auth/me/export`). Owners can also download every row their organization owns
+(`GET /api/v1/org/export`). Credentials (password, session and key hashes) are never exported.
+
+"Delete my account" (`POST /api/v1/auth/me/delete`, with the password) takes effect at once. An
+organization the account is the only member of is closed with all of its data. In organizations with other
+members the person just leaves. It is refused, before anything changes, in three cases:
+
+- the account is the only owner of an organization that has other members
+- an organization that would close still has a paid subscription (cancel it in the billing portal first)
+- the account's email is in `AUREX_PLATFORM_ADMIN_EMAILS`
+
+Audit events are kept, as the privacy notice says, and so are the payment provider's invoices.

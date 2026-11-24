@@ -40,7 +40,9 @@ export default function Privacy() {
         <h2>Your rights</h2>
         <p>
           You can access, correct, export or delete your data, object to processing and complain to a supervisory
-          authority. Contact the operator of this deployment to exercise these rights.
+          authority. In Settings → Profile → Your data you can download a copy of your data (owners also of their
+          organization&apos;s data) and delete your account; deletion takes effect at once. For anything else, contact
+          the operator of this deployment.
         </p>
       </Prose>
     </SitePage>
