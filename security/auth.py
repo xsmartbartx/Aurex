@@ -3,7 +3,7 @@
 import hashlib
 import re
 import secrets
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from argon2 import PasswordHasher
@@ -15,7 +15,7 @@ from core.config import Settings, get_settings
 from core.errors import Conflict, EntitlementDenied, Forbidden, NotFound, Unauthenticated, ValidationFailure  # noqa: F401
 from core.types import Role, Scope, utcnow
 from modules.logging import record_audit
-from security.models import ApiKey, Invite, Membership, Tenant, User, UserSession
+from security.models import ApiKey, Invite, Membership, PasswordReset, Tenant, User, UserSession
 from security.plans import API_KEYS, MEMBERS, get_plan
 
 _hasher = PasswordHasher()
@@ -122,6 +122,99 @@ def sign_out(session: Session, token: str) -> None:
     if row and row.revoked_at is None:
         row.revoked_at = utcnow()
         record_audit(session, action="auth.sign_out", tenant_id=row.tenant_id, actor_id=row.user_id)
+
+
+# --- Password reset ---------------------------------------------------------------------------------------------
+
+RESET_TTL = timedelta(hours=1)
+
+
+def _revoke_sessions(session: Session, user_id: UUID) -> None:
+    for row in session.scalars(
+        select(UserSession).where(UserSession.user_id == user_id, UserSession.revoked_at.is_(None))
+    ):
+        row.revoked_at = utcnow()
+
+
+def _home_tenant(session: Session, user_id: UUID) -> UUID | None:
+    return session.scalar(
+        select(Membership.tenant_id).where(Membership.user_id == user_id).order_by(Membership.created_at).limit(1)
+    )
+
+
+def _issue_reset(session: Session, user: User, *, requested_by: UUID | None) -> tuple[str, datetime]:
+    """Create a reset link token. Only the newest link works: earlier unused ones expire now."""
+    now = utcnow()
+    for row in session.scalars(
+        select(PasswordReset).where(
+            PasswordReset.user_id == user.id, PasswordReset.used_at.is_(None), PasswordReset.expires_at > now
+        )
+    ):
+        row.expires_at = now
+    token = secrets.token_urlsafe(32)
+    expires_at = now + RESET_TTL
+    session.add(
+        PasswordReset(user_id=user.id, token_hash=hash_token(token), requested_by=requested_by, expires_at=expires_at)
+    )
+    return token, expires_at
+
+
+def request_password_reset(session: Session, *, email: str) -> tuple[User, str] | None:
+    """Self-service: a reset token for an active account, or None. Callers must not reveal which it was."""
+    user = session.scalar(select(User).where(User.email == email.strip().lower()))
+    if user is None or not user.is_active:
+        return None
+    token, _ = _issue_reset(session, user, requested_by=None)
+    record_audit(
+        session,
+        action="auth.password_reset_requested",
+        tenant_id=_home_tenant(session, user.id),
+        actor_id=user.id,
+        object_type="user",
+        object_id=user.id,
+    )
+    return user, token
+
+
+def issue_password_reset(session: Session, scope: Scope, *, email: str) -> tuple[User, str, datetime]:
+    """A platform administrator issues a reset link for an account, e.g. when email is not configured."""
+    if not scope.platform_admin:
+        raise Forbidden("Restricted to the deployment administrator")
+    user = session.scalar(select(User).where(User.email == email.strip().lower()))
+    if user is None:
+        raise NotFound("No account uses this email")
+    if not user.is_active:
+        raise ValidationFailure("This account is deactivated")
+    token, expires_at = _issue_reset(session, user, requested_by=scope.user_id)
+    record_audit(
+        session,
+        action="platform.password_reset_issued",
+        tenant_id=_home_tenant(session, user.id),
+        actor_id=scope.user_id,
+        object_type="user",
+        object_id=user.id,
+    )
+    return user, token, expires_at
+
+
+def reset_password(session: Session, *, token: str, password: str) -> None:
+    """Set a new password with a reset link. The link works once; every signed-in session is ended."""
+    row = session.scalar(select(PasswordReset).where(PasswordReset.token_hash == hash_token(token)).with_for_update())
+    user = session.get(User, row.user_id) if row else None
+    if row is None or row.used_at is not None or row.expires_at <= utcnow() or user is None or not user.is_active:
+        raise NotFound("This reset link is invalid or has expired")
+    check_password_strength(password)
+    user.password_hash = _hasher.hash(password)
+    row.used_at = utcnow()
+    _revoke_sessions(session, user.id)
+    record_audit(
+        session,
+        action="auth.password_reset",
+        tenant_id=_home_tenant(session, user.id),
+        actor_id=user.id,
+        object_type="user",
+        object_id=user.id,
+    )
 
 
 def change_password(session: Session, scope: Scope, *, current: str, new: str) -> None:

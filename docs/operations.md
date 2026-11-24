@@ -26,6 +26,16 @@
    emptying the setting.
 4. Set `AUREX_ALLOW_SIGNUP=false` if only invited users should get accounts.
 
+## Password resets
+
+"Forgot password?" on the sign-in page emails a reset link when SMTP is configured (`AUREX_SMTP_*`). The
+answer is the same whether or not an account uses the address. Without email, the page tells people to ask
+the administrator, who creates a link under Settings → Platform → "Password reset link for an account"
+(`POST /api/v1/auth/admin/password-reset`) and passes it on. A link works once, for one hour, and only the
+newest link of an account works. Using it ends every signed-in session of that account. Only a hash of the
+link is stored. The audit trail records `auth.password_reset_requested`, `platform.password_reset_issued` and
+`auth.password_reset`. Deactivated accounts cannot reset their password.
+
 ## Behind an existing reverse proxy
 
 On a host where another proxy already owns ports 80 and 443, use `deploy/docker-compose.edge.yml`

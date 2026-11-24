@@ -376,6 +376,43 @@ function Audit() {
 
 type TenantRow = { id: string; name: string; plan: string; status: string; members: number; created_at: string; subscription: boolean };
 
+function PasswordResetLink() {
+  const { run, note } = useAction();
+  const [link, setLink] = useState<string | null>(null);
+  return (
+    <div className="mb-5 space-y-2">
+      <form className="flex flex-wrap items-end gap-2" onSubmit={async (event: FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        const element = event.currentTarget;
+        const form = new FormData(element);
+        setLink(null);
+        await run(async () => {
+          const result = await api.post<{ emailed: boolean; link: string | null }>("/auth/admin/password-reset",
+            { email: String(form.get("email")) });
+          setLink(result.link);
+          element.reset();
+        }, "Password reset link created.");
+      }}>
+        <Field label="Password reset link for an account">
+          <Input name="email" type="email" required className="w-64" placeholder="their@email.com" />
+        </Field>
+        <Button type="submit" variant="primary"><KeyRound size={12} /> Create link</Button>
+      </form>
+      {note}
+      {link && (
+        <div className="rounded border border-gold/40 bg-gold/5 p-2.5 text-[12px]">
+          Email is not configured on this deployment. Send this link to the account holder yourself. It works once,
+          for one hour, and signs them out everywhere when used:
+          <div className="mt-1.5 flex items-center gap-2">
+            <code className="num min-w-0 flex-1 truncate rounded bg-ink px-2 py-1 text-[11px]">{link}</code>
+            <Button size="sm" onClick={() => navigator.clipboard.writeText(link)}><Copy size={11} /> Copy</Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Platform() {
   const { data, error, reload } = useApi<{ items: TenantRow[] }>("/admin/tenants");
   const { run, note } = useAction();
@@ -383,6 +420,7 @@ function Platform() {
   if (!data) return <Skeleton rows={6} />;
   return (
     <div className="p-4">
+      <PasswordResetLink />
       <p className="mb-3 text-[12px] text-dim">Organizations on this deployment. Plan changes here override billing until the next subscription event.</p>
       {note}
       <table className="w-full min-w-[720px] text-[12.5px]">
